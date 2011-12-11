@@ -28,6 +28,11 @@
 			</manifest>
 		</jar>
 		<delete dir="${build}" />
+		<copy todir="${dist}">
+		  <fileset dir="."
+				   includes="commons-lang-2.4.jar"
+		  />
+		</copy>
 	</target>
 
 	<target name="clean" description="clean up">

@@ -2,7 +2,6 @@ package packer;
 
 import java.awt.Container;
 import java.awt.Dimension;
-import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.AdjustmentEvent;
@@ -288,6 +287,7 @@ public class Archiver extends JFrame {
 			textureFiles.add(file);
 			jProgBar.setString(textureFiles.size() + " possible textures found");
 			jProgBar.repaint();
+			messageTextArea.setText("Number of image files found: " + textureFiles.size());
 		} else {
 			if (file.isDirectory()) {
 				for (File f : file.listFiles()) {
