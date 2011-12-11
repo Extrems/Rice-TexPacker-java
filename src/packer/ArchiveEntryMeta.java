@@ -13,6 +13,7 @@ public class ArchiveEntryMeta {
 	private Integer	compressedLength, width, height;
 	private Integer	alphaWidth, alphaHeight;
 	private String	rawPixelType, rawAlphaPixelType;
+	private String	errorMsg;
 
 	public ArchiveEntryMeta() {
 	}
@@ -123,5 +124,13 @@ public class ArchiveEntryMeta {
 
 	public void setRawAlphaPixelType(String rawAlphaPixelType) {
 		this.rawAlphaPixelType = rawAlphaPixelType;
+	}
+
+	public String getErrorMsg() {
+		return this.errorMsg;
+	}
+
+	public void setErrorMsg(String errorMsg) {
+		this.errorMsg = errorMsg;
 	}
 }

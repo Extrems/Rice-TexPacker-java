@@ -8,6 +8,7 @@ import java.awt.event.AdjustmentEvent;
 import java.awt.event.AdjustmentListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -25,9 +26,11 @@ import javax.swing.JDialog;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
+import javax.swing.JOptionPane;
 import javax.swing.JProgressBar;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
+import javax.swing.JTextPane;
 
 import org.apache.commons.lang.StringUtils;
 
@@ -63,7 +66,9 @@ public class Archiver extends JFrame {
 
 	private final String					version			= "v1.0";
 	private File							outputArchive;
+	private boolean							startPushed		= false;
 	private RandomAccessFile				fw;
+	private BufferedWriter					logFile;
 	private List<File>						textureFiles;
 	/* GUI crap */
 	private final Dimension					screenDimension	= new Dimension(800, 600);
@@ -75,13 +80,14 @@ public class Archiver extends JFrame {
 	private boolean							dirSelected		= false;
 	private JButton							startBtn		= new JButton("Start!");
 	private JButton							packInfoBtn		= new JButton("Pack Info...");
-	private JTextArea						messageTextArea	= new JTextArea();
+	private JTextPane						messageTextArea	= new JTextPane();
 	private JProgressBar					jProgBar		= new JProgressBar(0, 100);
 	// List of crc64 and offset
 	private List<SimpleEntry<Long, Long>>	crcLookupTable;
 	private int								numAdded		= 0;
 
-	public Archiver() throws IOException {
+	public Archiver(BufferedWriter logFile) throws IOException {
+		this.logFile = logFile;
 		this.setMinimumSize(screenDimension);
 		this.addWindowListener(new WindowAdapter() {
 			@Override
@@ -118,29 +124,7 @@ public class Archiver extends JFrame {
 
 			@Override
 			public void actionPerformed(ActionEvent arg0) {
-				Thread processThread = new Thread() {
-					@Override
-					public void run() {
-						outputArchive = new File(getPakPath());
-						try {
-							jProgBar.setValue(0);
-							numAdded = 0;
-							crcLookupTable = new ArrayList<SimpleEntry<Long, Long>>();
-							textureFiles = new ArrayList<File>();
-							fw = new RandomAccessFile(outputArchive, "rw");
-							initializePak();
-							getTextureFiles(new File(getTexturePath()));
-							processTextures();
-							finalizePak();
-							printStats();
-						} catch (FileNotFoundException e) {
-							e.printStackTrace();
-						} catch (IOException e) {
-							e.printStackTrace();
-						}
-					}
-				};
-				processThread.start();
+				setStartPushed(true);
 			}
 
 		});
@@ -200,11 +184,35 @@ public class Archiver extends JFrame {
 		});
 	}
 
+	public void run() {
+		outputArchive = new File(getPakPath());
+		try {
+			jProgBar.setValue(0);
+			numAdded = 0;
+			crcLookupTable = new ArrayList<SimpleEntry<Long, Long>>();
+			textureFiles = new ArrayList<File>();
+			fw = new RandomAccessFile(outputArchive, "rw");
+			initializePak();
+			getTextureFiles(new File(getTexturePath()));
+			if (processTextures()) {
+				finalizePak();
+				printStats();
+				JOptionPane.showMessageDialog(dirTxt, "Successfully created texture pak!");
+			} else {
+				JOptionPane.showMessageDialog(dirTxt, "Failed to create texture pak!");
+			}
+		} catch (FileNotFoundException e) {
+			e.printStackTrace();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+
 	/**
 	 * Performs texture file priority based on type (_all,_rgb,_a, etc) and
 	 * processes/adds files
 	 */
-	private void processTextures() {
+	private boolean processTextures() {
 		// Don't keep redundant files based on a hierarchy
 		List<File> tmp = new ArrayList<File>();
 		for (int i = 0; i < textureFiles.size(); i++) {
@@ -247,34 +255,40 @@ public class Archiver extends JFrame {
 		tmp.clear();
 
 		// Add them all now
-		try {
-			for (int i = 0; i < textureFiles.size(); i++) {
-				File primaryFile = textureFiles.get(i);
-				File alphaFile = null;
-				// Pair alpha with _rgb files (if they exist)
-				if (!StringUtils.endsWithIgnoreCase(primaryFile.getName(), "_a.png")) {
-					if (StringUtils.endsWithIgnoreCase(primaryFile.getName(), "_rgb.png")) {
-						for (int j = 0; j < textureFiles.size(); j++) {
-							if (StringUtils.endsWithIgnoreCase(textureFiles.get(j).getName(), "_a.png")) {
-								String s1 = StringUtils.substringBeforeLast(primaryFile.getName(), "_") + "_a.png";
-								String s2 = textureFiles.get(j).getName();
-								if (StringUtils.equalsIgnoreCase(s1, s2)) {
-									alphaFile = textureFiles.get(j);
-								}
+		for (int i = 0; i < textureFiles.size(); i++) {
+			File primaryFile = textureFiles.get(i);
+			File alphaFile = null;
+			// Pair alpha with _rgb files (if they exist)
+			if (!StringUtils.endsWithIgnoreCase(primaryFile.getName(), "_a.png")) {
+				if (StringUtils.endsWithIgnoreCase(primaryFile.getName(), "_rgb.png")) {
+					for (int j = 0; j < textureFiles.size(); j++) {
+						if (StringUtils.endsWithIgnoreCase(textureFiles.get(j).getName(), "_a.png")) {
+							String s1 = StringUtils.substringBeforeLast(primaryFile.getName(), "_") + "_a.png";
+							String s2 = textureFiles.get(j).getName();
+							if (StringUtils.equalsIgnoreCase(s1, s2)) {
+								alphaFile = textureFiles.get(j);
 							}
 						}
 					}
-					addEntry(new ArchiveEntry(primaryFile, alphaFile));
-					jProgBar.setValue((int) (Math.ceil(((float) i / (float) textureFiles.size()) * 100)));
-					jProgBar.setStringPainted(true);
-					jProgBar.setString(i + 1 + " of " + textureFiles.size() + " processed");
-					jProgBar.repaint();
 				}
+				ArchiveEntry newEntry = new ArchiveEntry(primaryFile, alphaFile);
+				if (newEntry.process()) {
+					addEntry(newEntry);
+				} else {
+					log("\r\nERROR: \r\n" + newEntry.getMeta().getFileName() + "\r\nFailed to process due to: "
+							+ newEntry.getMeta().getErrorMsg());
+					return false;
+				}
+				newEntry = null;
+				primaryFile = null;
+				alphaFile = null;
+				jProgBar.setValue((int) (Math.ceil(((float) i / (float) textureFiles.size()) * 100)));
+				jProgBar.setStringPainted(true);
+				jProgBar.setString(i + 1 + " of " + textureFiles.size() + " processed");
+				jProgBar.repaint();
 			}
-		} catch (Exception e) {
-			// Bad texture or failed to write it to disk!
-			e.printStackTrace();
 		}
+		return true;
 	}
 
 	/** Gets all the files which might be textures */
@@ -331,22 +345,27 @@ public class Archiver extends JFrame {
 	}
 
 	/** Adds an entry to the zipped stream and updates the LUT */
-	public void addEntry(ArchiveEntry entry) throws IOException {
-		// Update the Entry Meta with our current File Pointer
-		entry.getMeta().setOffset(fw.getFilePointer());
+	public void addEntry(ArchiveEntry entry) {
+		try {
+			// Update the Entry Meta with our current File Pointer
+			entry.getMeta().setOffset(fw.getFilePointer());
 
-		// Add it to our LUT
-		crcLookupTable.add(new SimpleEntry<Long, Long>(entry.getMeta().getCRC64(), entry.getMeta().getOffset()));
+			// Add it to our LUT
+			crcLookupTable.add(new SimpleEntry<Long, Long>(entry.getMeta().getCRC64(), entry.getMeta().getOffset()));
 
-		// Write out the Actual Entry (Width+Height+GXTexture)
-		fw.writeByte(new Integer(entry.getMeta().getWidth() / 4).byteValue());
-		fw.writeByte(new Integer(entry.getMeta().getHeight() / 4).byteValue());
-		fw.writeByte(entry.getMeta().getGXFormat().byteValue());
-		fw.write(entry.getGXTexture());
+			// Write out the Actual Entry (Width+Height+GXTexture)
+			fw.writeByte(new Integer(entry.getMeta().getWidth() / 4).byteValue());
+			fw.writeByte(new Integer(entry.getMeta().getHeight() / 4).byteValue());
+			fw.writeByte(entry.getMeta().getGXFormat().byteValue());
+			fw.write(entry.getGXTexture());
 
-		// Update the log window
-		log(entry.getMeta().toString());
-		numAdded++;
+			// Update the log window
+			log(entry.getMeta().toString());
+			numAdded++;
+		} catch (IOException e) {
+			e.printStackTrace();
+			log("Failed to add entry to pak! " + entry.getMeta().toString());
+		}
 	}
 
 	public void printStats() {
@@ -373,7 +392,16 @@ public class Archiver extends JFrame {
 	 * @param msg
 	 */
 	private void log(String msg) {
-		messageTextArea.setText(messageTextArea.getText() + "\r\n" + msg);
+		if (StringUtils.countMatches(messageTextArea.getText(), "\r\n") > 1000) {
+			messageTextArea.setText(msg); // after 1000 lines, clear it.
+		} else {
+			messageTextArea.setText(messageTextArea.getText() + "\r\n" + msg);
+		}
+		try {
+			logFile.write(msg + "\r\n");
+		} catch (IOException e) {
+			e.printStackTrace(); // BAD
+		}
 	}
 
 	public final byte[] longToBytes(long v) {
@@ -389,6 +417,14 @@ public class Archiver extends JFrame {
 		writeBuffer[7] = (byte) (v >>> 0);
 
 		return writeBuffer;
+	}
+
+	public boolean isStartPushed() {
+		return startPushed;
+	}
+
+	public void setStartPushed(boolean startPushed) {
+		this.startPushed = startPushed;
 	}
 
 }

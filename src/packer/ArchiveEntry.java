@@ -1,11 +1,5 @@
 package packer;
 
-import java.awt.Frame;
-import java.awt.Graphics;
-import java.awt.Image;
-import java.awt.Toolkit;
-import java.awt.event.WindowAdapter;
-import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -26,7 +20,8 @@ import org.apache.commons.lang.StringUtils;
 public class ArchiveEntry {
 	private ArchiveEntryMeta	metaData;
 	private byte[]				gxTexture;
-	private Image				pngImg;
+	private File				primaryFile;
+	private File				alphaFile;
 
 	// Examples of Hi-Res texture naming
 	// SUPER MARIO 64#0B6D2926#0#2_all.png
@@ -47,12 +42,12 @@ public class ArchiveEntry {
 	 * @throws InterruptedException
 	 * @throws IOException
 	 */
-	public ArchiveEntry(File primaryFile, File alphaFile) throws InterruptedException, IOException, Exception {
+	public ArchiveEntry(File primaryFile, File alphaFile) {
+		this.primaryFile = primaryFile;
+		this.alphaFile = alphaFile;
+	}
 
-		System.out.println("Process: " + primaryFile.getName());
-		if (alphaFile != null) {
-			System.out.println("Extra: " + alphaFile.getName());
-		}
+	public boolean process() {
 		int[] primaryPixels = null;
 		int[] alphaPixels = null;
 		boolean replaceAlphaWithB = StringUtils.startsWithIgnoreCase(
@@ -62,51 +57,72 @@ public class ArchiveEntry {
 		metaData.setFileName(primaryFile.getAbsolutePath());
 
 		// Decompress the primary PNG
-		pngImg = Toolkit.getDefaultToolkit().getImage(metaData.getFileName());
-		ImageFrame primaryFrame = new ImageFrame(pngImg, metaData.getFileName(), false);
-		metaData.setWidth(pngImg.getWidth(primaryFrame));
-		metaData.setHeight(pngImg.getHeight(primaryFrame));
 
 		// Grab the primary PNG pixels
 		File f = new File(metaData.getFileName());
-		BufferedImage bufferedImage = ImageIO.read(f);
+		BufferedImage bufferedImage = null;
+		try {
+			bufferedImage = ImageIO.read(f);
+			metaData.setWidth(bufferedImage.getWidth());
+			metaData.setHeight(bufferedImage.getHeight());
+		} catch (IOException e) {
+			metaData.setErrorMsg("Failed to read Image from file! Please check that this is a valid image.");
+			return false;
+		}
 		metaData.setRawPixelType(getType(bufferedImage.getType()));
 		primaryPixels = bufferedImage.getRGB(0, 0, metaData.getWidth(), metaData.getHeight(), primaryPixels, 0,
 				metaData.getWidth());
 
 		// Decompress the alpha PNG if it exists
+		BufferedImage alphaImage = null;
 		if (alphaFile != null) {
-			Image alphaImg = Toolkit.getDefaultToolkit().getImage(alphaFile.getAbsolutePath());
-			ImageFrame secondaryFrame = new ImageFrame(alphaImg, alphaFile.getAbsolutePath(), false);
-			metaData.setAlphaWidth(alphaImg.getWidth(secondaryFrame));
-			metaData.setAlphaHeight(alphaImg.getHeight(secondaryFrame));
-			BufferedImage alphaImage = ImageIO.read(alphaFile);
+			try {
+				alphaImage = ImageIO.read(alphaFile);
+				metaData.setAlphaWidth(alphaImage.getWidth());
+				metaData.setAlphaHeight(alphaImage.getHeight());
+			} catch (IOException e) {
+				metaData.setErrorMsg("Failed to read alpha Image from file! Please check that this is a valid image.");
+				return false;
+			}
 			metaData.setRawAlphaPixelType(getType(alphaImage.getType()));
 			alphaPixels = alphaImage.getRGB(0, 0, metaData.getAlphaWidth(), metaData.getAlphaHeight(), alphaPixels, 0,
 					metaData.getAlphaWidth());
-			secondaryFrame.dispose();
 		}
 
 		// Convert 24bit or 24bit + alpha/etc
 		if (bufferedImage.getType() == BufferedImage.TYPE_3BYTE_BGR) {
 			if (alphaPixels != null && alphaPixels.length != primaryPixels.length) {
-				throw new Exception("Alpha data cannot differ in dimensions from RGB data");
+				metaData.setErrorMsg("Alpha data cannot differ in dimensions from RGB data, to continue, delete/fix the _a.png file and start the process again");
+				return false;
 			}
-			gxTexture = convertTex24bpp(primaryPixels, alphaPixels, replaceAlphaWithB);
+			convertTex24bpp(primaryPixels, alphaPixels, replaceAlphaWithB);
 		}
 		// Else, simple 32 bit RGBA conversion
 		else if (bufferedImage.getType() == BufferedImage.TYPE_4BYTE_ABGR) {
-			gxTexture = convertTex32bpp(primaryPixels);
+			convertTex32bpp(primaryPixels);
 		}
+		primaryPixels = null;
+		alphaPixels = null;
+		bufferedImage = null;
+		alphaImage = null;
 
 		// Compress it
 		ByteArrayOutputStream bos = new ByteArrayOutputStream();
-		GZIPOutputStream gz = new GZIPOutputStream(bos);
-		gz.write(gxTexture);
-		gz.flush();
-		gz.close();
+		GZIPOutputStream gz = null;
+		try {
+			gz = new GZIPOutputStream(bos);
+			gz.write(gxTexture);
+			gz.flush();
+			gz.close();
+			gxTexture = bos.toByteArray();
+			bos.close();
+		} catch (IOException e) {
+			metaData.setErrorMsg("Failed to compress converted image! Report this bug to the developer.");
+			return false;
+		}
+		gz = null;
+		bos = null;
 
-		gxTexture = bos.toByteArray();
 		metaData.setCompressedLength(gxTexture.length);
 
 		// Standardise directory separators across platforms
@@ -132,7 +148,8 @@ public class ArchiveEntry {
 		}
 
 		metaData.setType(StringUtils.substringBefore(textureInfo, "."));
-		primaryFrame.dispose();
+
+		return true;
 	}
 
 	private String getType(int type) {
@@ -151,7 +168,7 @@ public class ArchiveEntry {
 	 * @param data
 	 * @return
 	 */
-	public byte[] convertTex32bpp(int[] data) {
+	public void convertTex32bpp(int[] data) {
 		byte R, G, B, A;
 		int color, x, y, ind = 0;
 		int w = metaData.getWidth() - (metaData.getWidth() % 4);
@@ -177,12 +194,11 @@ public class ArchiveEntry {
 				ind += 16;
 			}
 		}
-		byte[] gxTextureBytes = new byte[GX_buffer.length * 2];
+		gxTexture = new byte[GX_buffer.length * 2];
 		for (int i = 0; i < GX_buffer.length; i++) {
-			gxTextureBytes[i * 2] = (byte) (GX_buffer[i] >> 8);
-			gxTextureBytes[(i * 2) + 1] = (byte) (GX_buffer[i] & 0xFF);
+			gxTexture[i * 2] = (byte) (GX_buffer[i] >> 8);
+			gxTexture[(i * 2) + 1] = (byte) (GX_buffer[i] & 0xFF);
 		}
-		return gxTextureBytes;
 	}
 
 	/**
@@ -195,7 +211,7 @@ public class ArchiveEntry {
 	 * @param replaceAlphaWithB
 	 * @return
 	 */
-	public byte[] convertTex24bpp(int[] primaryPixels, int[] alphaPixels, boolean replaceAlphaWithB) {
+	public void convertTex24bpp(int[] primaryPixels, int[] alphaPixels, boolean replaceAlphaWithB) {
 		byte R, G, B, A;
 		int x, y, ind = 0;
 		int w = metaData.getWidth() - (metaData.getWidth() % 4);
@@ -228,54 +244,19 @@ public class ArchiveEntry {
 				ind += 16;
 			}
 		}
-		byte[] gxTextureBytes = new byte[GX_buffer.length * 2];
+		gxTexture = new byte[GX_buffer.length * 2];
 		for (int i = 0; i < GX_buffer.length; i++) {
-			gxTextureBytes[i * 2] = (byte) (GX_buffer[i] >> 8);
-			gxTextureBytes[(i * 2) + 1] = (byte) (GX_buffer[i] & 0xFF);
+			gxTexture[i * 2] = (byte) (GX_buffer[i] >> 8);
+			gxTexture[(i * 2) + 1] = (byte) (GX_buffer[i] & 0xFF);
 		}
-		return gxTextureBytes;
 	}
 
 	public byte[] getGXTexture() {
 		return gxTexture;
 	}
 
-	public Image getPngImg() {
-		return pngImg;
-	}
-
 	public ArchiveEntryMeta getMeta() {
 		return metaData;
 	}
-}
 
-@SuppressWarnings("serial")
-class ImageFrame extends Frame {
-	private static final int	XBORDER	= 20;
-	private static final int	YBORDER	= 50;
-	private Image				img;
-
-	public void paint(Graphics g) {
-		g.drawImage(img, XBORDER, YBORDER, this);
-	}
-
-	public ImageFrame(Image img, String title, boolean showVisible) {
-		this.img = img;
-		setTitle(title);
-		while (img.getWidth(this) <= 0) {
-			try {
-				Thread.sleep(10);
-			} catch (Exception e) {
-			}
-		}
-		setSize(img.getWidth(this) + XBORDER * 2, img.getHeight(this) + YBORDER * 2);
-		setVisible(showVisible);
-		this.addWindowListener(new WindowAdapter() {
-			@Override
-			public void windowClosing(WindowEvent arg0) {
-				super.windowClosing(arg0);
-				setVisible(false);
-			}
-		});
-	}
 }
