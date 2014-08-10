@@ -1,9 +1,8 @@
 package packer;
 
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
+
+import util.Log;
 
 /**
  * Rice Hi-Res texture packer for Wii64
@@ -17,8 +16,8 @@ public class Packer {
 
 	public static void main(String[] argv) {
 		try {
-			BufferedWriter logFile = new BufferedWriter(new FileWriter(new File("." + "\\logfile.txt")));
-			archiver = new Archiver(logFile);
+			Log.info("Program startup");
+			archiver = new Archiver();
 			archiver.setVisible(true);
 			while (archiver.isVisible()) {
 				Thread.sleep(100);
@@ -27,6 +26,7 @@ public class Packer {
 					archiver.setStartPushed(false);
 				}
 			}
+			Log.info("Program exit");
 		} catch (IOException e) {
 			System.out.println("Error Creating output archive to: " + archiver.getPakPath());
 		} catch (InterruptedException e) {

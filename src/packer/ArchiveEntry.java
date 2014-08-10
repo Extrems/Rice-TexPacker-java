@@ -70,8 +70,7 @@ public class ArchiveEntry {
 			return false;
 		}
 		metaData.setRawPixelType(getType(bufferedImage.getType()));
-		primaryPixels = bufferedImage.getRGB(0, 0, metaData.getWidth(), metaData.getHeight(), primaryPixels, 0,
-				metaData.getWidth());
+		primaryPixels = bufferedImage.getRGB(0, 0, metaData.getWidth(), metaData.getHeight(), primaryPixels, 0, metaData.getWidth());
 
 		// Decompress the alpha PNG if it exists
 		BufferedImage alphaImage = null;
@@ -85,8 +84,7 @@ public class ArchiveEntry {
 				return false;
 			}
 			metaData.setRawAlphaPixelType(getType(alphaImage.getType()));
-			alphaPixels = alphaImage.getRGB(0, 0, metaData.getAlphaWidth(), metaData.getAlphaHeight(), alphaPixels, 0,
-					metaData.getAlphaWidth());
+			alphaPixels = alphaImage.getRGB(0, 0, metaData.getAlphaWidth(), metaData.getAlphaHeight(), alphaPixels, 0, metaData.getAlphaWidth());
 		}
 
 		// Convert 24bit or 24bit + alpha/etc
@@ -154,10 +152,10 @@ public class ArchiveEntry {
 
 	private String getType(int type) {
 		switch (type) {
-			case BufferedImage.TYPE_4BYTE_ABGR:
-				return "4 Byte ABGR (6)";
-			case BufferedImage.TYPE_3BYTE_BGR:
-				return "4 Byte BGR (5)";
+		case BufferedImage.TYPE_4BYTE_ABGR:
+			return "4 Byte ABGR (6)";
+		case BufferedImage.TYPE_3BYTE_BGR:
+			return "4 Byte BGR (5)";
 		}
 		return "Unknown";
 	}
